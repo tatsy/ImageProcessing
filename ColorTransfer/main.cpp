@@ -18,8 +18,10 @@ using namespace std;
 
 #include <opencv2\opencv.hpp>
 
-cv::Vec3d operator *(const cv::Mat& M, const cv::Vec3d& v) {
-	cv::Vec3d u;
+#include "Color3d.h"
+
+Color3d operator *(const cv::Mat& M, Color3d& v) {
+	Color3d u = Color3d();
 	for(int i=0; i<3; i++) {
 		u(i) = 0.0;
 		for(int j=0; j<3; j++) {
@@ -57,6 +59,8 @@ const double LMS2lab2[3][3] = {
 	{ 1.0, -1.0,  0.0 }
 };
 
+const double eps = 1.0e-4;
+
 int main(int argc, char** argv) {
 	// Check number of arguments
 	if(argc <= 2) {
@@ -66,20 +70,22 @@ int main(int argc, char** argv) {
 
 	// Load target image
 	cv::Mat target = cv::imread(argv[1], CV_LOAD_IMAGE_COLOR);
-	target.convertTo(target, CV_64FC3, 1.0 / 255.0);
 	if(target.empty()) {
 		cout << "Failed to load file \"" << argv[1] << "\"" << endl;
 		return -1;
 	}
-
+	cv::cvtColor(target, target, CV_BGR2RGB);
+	target.convertTo(target, CV_64FC3, 1.0 / 255.0);
+	
 	// Load reference image
 	cv::Mat refer  = cv::imread(argv[2], CV_LOAD_IMAGE_COLOR);
-	refer.convertTo(refer, CV_64FC3, 1.0 / 255.0);
 	if(refer.empty()) {
 		cout << "Failed to load file \"" << argv[2] << "\"" << endl;
 		return -1;
 	}
-
+	cv::cvtColor(refer, refer, CV_BGR2RGB);
+	refer.convertTo(refer, CV_64FC3, 1.0 / 255.0);
+	
 	// Construct transformation matrix
 	const size_t bufsize = sizeof(double) * 3 * 3;
 	cv::Mat mRGB2LMS = cv::Mat(3, 3, CV_64FC1);
@@ -93,23 +99,81 @@ int main(int argc, char** argv) {
 
 	cv::Mat mLMS2lab2 = cv::Mat(3, 3, CV_64FC1);
 	memcpy(mLMS2lab2.data, &LMS2lab2[0][0], bufsize);
+
+	cv::Mat mLMS2lab = mLMS2lab2 * mLMS2lab1;
+	cv::Mat mlab2LMS = mLMS2lab.inv();
 	
-	// Transform images from RGB to LMS
+	// Transform images from RGB to lab and
+	// compute average and standard deviation of each color channels
+	Color3d v;
+	Color3d mt = Color3d(0.0, 0.0, 0.0);
+	Color3d st  = Color3d(0.0, 0.0, 0.0);
 	for(int y=0; y<target.rows; y++) {
 		for(int x=0; x<target.cols; x++) {
-			cv::Vec3d v = target.at<cv::Vec3d>(y,x);
-			target.at<cv::Vec3d>(y, x) = mRGB2LMS * v;
+			v = target.at<Color3d>(y, x);
+			v = mRGB2LMS * v;
+			for(int c=0; c<3; c++) v(c) = v(c) > eps ? log10(v(c)) : log10(eps);
+
+			target.at<Color3d>(y, x) = mLMS2lab * v;
+			mt = mt + target.at<Color3d>(y, x);
+			st  = st + target.at<Color3d>(y, x) * target.at<Color3d>(y, x);
 		}
 	}
 
+	Color3d mr = Color3d(0.0, 0.0, 0.0);
+	Color3d sr  = Color3d(0.0, 0.0, 0.0);
+	for(int y=0; y<refer.rows; y++) {
+		for(int x=0; x<refer.cols; x++) {
+			v = refer.at<Color3d>(y, x);
+			v = mRGB2LMS * v;
+			for(int c=0; c<3; c++) v(c) = v(c) > eps ? log10(v(c)) : log10(eps);
+
+			refer.at<Color3d>(y, x) = mLMS2lab * v;
+			mr = mr + refer.at<Color3d>(y, x);
+			sr = sr + refer.at<Color3d>(y, x) * refer.at<Color3d>(y, x);
+		}
+	}
+
+	int Nt = target.rows * target.cols;
+	int Nr = refer.rows * refer.cols;
+	mt = mt.divide(Nt);
+	mr = mr.divide(Nr);
+	st = st.divide(Nt) - mt * mt;
+	sr = sr.divide(Nr) - mr * mr;
+	for(int i=0; i<3; i++) {
+		st(i) = sqrt(st(i));
+		sr(i) = sqrt(sr(i));
+	}
+
+	// transfer colors
+	for(int y=0; y<target.rows; y++) {
+		for(int x=0; x<target.cols; x++) {
+			for(int c=0; c<3; c++) {
+				double val = target.at<double>(y, x*3+c);
+				target.at<double>(y, x*3+c) = (val - mt(c)) / st(c) * sr(c) + mr(c);
+			}
+		}
+	}
+
+	// transform back from lab to RGB
+	for(int y=0; y<target.rows; y++) {
+		for(int x=0; x<target.cols; x++) {
+			v = target.at<Color3d>(y, x);
+			v = mlab2LMS * v;
+			for(int c=0; c<3; c++) v(c) = v(c) > -5.0 ? pow(10.0, v(c)) : eps;
+
+			target.at<Color3d>(y, x) = mLMS2RGB * v;
+		}
+	}
+	target.convertTo(target, CV_8UC3, 255.0);
+	cv::cvtColor(target, target, CV_RGB2BGR);
+
 	cv::namedWindow("target");
-	cv::namedWindow("reference");
 	cv::imshow("target", target);
-	cv::imshow("reference", refer);
+	cv::imwrite("output.jpg", target);
 	cv::waitKey(0);
 	cv::destroyAllWindows();
 
 	target.release();
 	refer.release();
-
 }
