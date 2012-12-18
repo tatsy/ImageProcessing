@@ -20,6 +20,7 @@ using namespace std;
 
 #include "Color3d.h"
 
+// Multiplication of matrix and vector
 Color3d operator *(const cv::Mat& M, Color3d& v) {
 	Color3d u = Color3d();
 	for(int i=0; i<3; i++) {
@@ -145,7 +146,7 @@ int main(int argc, char** argv) {
 		sr(i) = sqrt(sr(i));
 	}
 
-	// transfer colors
+	// Transfer colors
 	for(int y=0; y<target.rows; y++) {
 		for(int x=0; x<target.cols; x++) {
 			for(int c=0; c<3; c++) {
@@ -155,7 +156,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	// transform back from lab to RGB
+	// Transform back from lab to RGB
 	for(int y=0; y<target.rows; y++) {
 		for(int x=0; x<target.cols; x++) {
 			v = target.at<Color3d>(y, x);
@@ -173,7 +174,4 @@ int main(int argc, char** argv) {
 	cv::imwrite("output.jpg", target);
 	cv::waitKey(0);
 	cv::destroyAllWindows();
-
-	target.release();
-	refer.release();
 }
