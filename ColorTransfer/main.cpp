@@ -1,7 +1,7 @@
 ﻿/***********************************************************
 * Color Transfer Implementation
 ************************************************************
-* This code is an implementation of the paper [Reinhard2000].
+* This code is an implementation of the paper [Reinhard2001].
 * The program transfers the color of one image (in this code
 * reference image) to another image (in this code target image).
 *
