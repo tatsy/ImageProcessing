@@ -117,6 +117,7 @@ int main(int argc, char** argv) {
 		cv::waitKey(0);
 	}
 	printf("\n");
+	cv::imwrite("output.png", img); 
 
 	cv::destroyAllWindows();
 }
