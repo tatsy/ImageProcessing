@@ -29,23 +29,20 @@ long t, elapsed;
 #define CLOCK_START t = clock();
 #define CLOCK_END cout << "[ Time ]" << endl << "  " << ((clock() - t) / 1000.0) << " sec" << endl;
 
-// Fast pow function, referred from
-// http://martin.ankerl.com/2012/01/25/optimized-approximative-pow-in-c-and-cpp/
-double fastPow(double a, double b) {
-	union {
-		double d;
-		int x[2];
-	} u = { a };
-	u.x[1] = (int)(b * (u.x[1] - 1072632447) + 1072632447);
-	u.x[0] = 0;
-	return u.d;
-}
-
 // Recursive filter for vertical direction
-void recursiveFilterVertical(cv::Mat& out, cv::Mat& dct) {
-	int width = out.cols;
+void recursiveFilterVertical(cv::Mat& out, cv::Mat& dct, double sigma_H) {
+	int width  = out.cols;
 	int height = out.rows;
-	int dim = out.channels();
+	int dim    = out.channels();
+    double a   = exp(-sqrt(2.0) / sigma_H);
+    
+    cv::Mat V;
+    dct.convertTo(V, CV_64FC1);
+    for(int x=0; x<width; x++) {
+		for(int y=0; y<height-1; y++) {
+            V.at<double>(y, x) = pow(a, V.at<double>(y, x));
+        }
+    }
 
 	// if openmp is available, compute in parallel
 #ifdef _OPENMP
@@ -53,26 +50,39 @@ void recursiveFilterVertical(cv::Mat& out, cv::Mat& dct) {
 #endif
 	for(int x=0; x<width; x++) {
 		for(int y=1; y<height; y++) {
-			double p = dct.at<float>(y-1, x);
+			double p = V.at<double>(y-1, x);
 			for(int c=0; c<dim; c++) {
-				out.at<float>(y, x*dim+c) = (1.0 - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y-1, x*dim+c);
+                double val1 = out.at<double>(y, x*dim+c);
+                double val2 = out.at<double>(y-1, x*dim+c);
+				out.at<double>(y, x*dim+c) = val1 + p * (val2 - val1);
 			}
 		}
 
 		for(int y=height-2; y>=0; y--) {
-			double p = dct.at<float>(y, x);
+			double p = V.at<double>(y, x);
 			for(int c=0; c<dim; c++) {
-				out.at<float>(y, x*dim+c) = p * out.at<float>(y+1, x*dim+c) + (1.0 - p) * out.at<float>(y, x*dim+c);
+                double val1 = out.at<double>(y, x*dim+c);
+                double val2 = out.at<double>(y+1, x*dim+c);
+				out.at<double>(y, x*dim+c) = val1 + p * (val2 - val1);
 			}
 		}
 	}
 }
 
 // Recursive filter for horizontal direction
-void recursiveFilterHorizontal(cv::Mat& out, cv::Mat& dct) {
-	int width = out.cols;
+void recursiveFilterHorizontal(cv::Mat& out, cv::Mat& dct, double sigma_H) {
+	int width  = out.cols;
 	int height = out.rows;
-	int dim = out.channels();
+	int dim    = out.channels();
+    double a = exp(-sqrt(2.0) / sigma_H);
+    
+    cv::Mat V;
+    dct.convertTo(V, CV_64FC1);
+    for(int x=0; x<width-1; x++) {
+		for(int y=0; y<height; y++) {
+            V.at<double>(y, x) = pow(a, V.at<double>(y, x));
+        }
+    }
 
 	// if openmp is available, compute in parallel
 #ifdef _OPENMP
@@ -80,60 +90,65 @@ void recursiveFilterHorizontal(cv::Mat& out, cv::Mat& dct) {
 #endif
 	for(int y=0; y<height; y++) {
 		for(int x=1; x<width; x++) {
-			double p = dct.at<float>(y, x-1);
+			double p = V.at<double>(y, x-1);
 			for(int c=0; c<dim; c++) {
-				out.at<float>(y, x*dim+c) = (1.0 - p) * out.at<float>(y, x*dim+c) + p * out.at<float>(y, (x-1)*dim+c);
+                double val1 = out.at<double>(y, x*dim+c);
+                double val2 = out.at<double>(y, (x-1)*dim+c);
+				out.at<double>(y, x*dim+c) = val1 + p * (val2 - val1);
 			}
 		}
 
 		for(int x=width-2; x>=0; x--) {
-			double p = dct.at<float>(y, x);
+			double p = V.at<double>(y, x);
 			for(int c=0; c<dim; c++) {
-				out.at<float>(y, x*dim+c) = p * out.at<float>(y, (x+1)*dim+c) + (1.0 - p) * out.at<float>(y, x*dim+c);
+                double val1 = out.at<double>(y, x*dim+c);
+                double val2 = out.at<double>(y, (x+1)*dim+c);
+				out.at<double>(y, x*dim+c) = val1 + p * (val2 - val1);
 			}
 		}
 	}
 }
 
 // Domain transform filtering
-void domainTransformFilter(cv::Mat& img, cv::Mat& out, double sigma_s, double sigma_r, int maxiter) {
+void domainTransformFilter(cv::Mat& img, cv::Mat& out, cv::Mat& joint, double sigma_s, double sigma_r, int maxiter) {
+	assert(img.depth() == CV_64F && joint.depth() == CV_64F);
+
 	int width = img.cols;
 	int height = img.rows;
 	int dim = img.channels();
-	img.convertTo(img, CV_MAKETYPE(CV_32F, dim), 1.0 / 255.0);
 
 	// compute derivatives of transformed domain "dct"
 	// and a = exp(-sqrt(2) / sigma_H) to the power of "dct"
-	cv::Mat dctx = cv::Mat(height, width-1, CV_32FC1);
-	cv::Mat dcty = cv::Mat(height-1, width, CV_32FC1);
+	cv::Mat dctx = cv::Mat(height, width-1, CV_64FC1);
+	cv::Mat dcty = cv::Mat(height-1, width, CV_64FC1);
 	double ratio = sigma_s / sigma_r;
 
-	double a = exp(-sqrt(2.0) / sigma_s);
 	for(int y=0; y<height; y++) {
 		for(int x=0; x<width-1; x++) {
-			float accum = 0.0f;
+			double accum = 0.0;
 			for(int c=0; c<dim; c++) {
-				accum += abs(img.at<float>(y, (x+1)*dim+c) - img.at<float>(y, x*dim+c)); 
+				accum += abs(joint.at<double>(y, (x+1)*dim+c) - joint.at<double>(y, x*dim+c));
 			}
-			dctx.at<float>(y, x) = fastPow(a, 1.0f + ratio * accum); 
+			dctx.at<double>(y, x) = 1.0 + ratio * accum;
 		}
 	}
 
 	for(int x=0; x<width; x++) {
 		for(int y=0; y<height-1; y++) {
-			float accum = 0.0f;
+			double accum = 0.0;
 			for(int c=0; c<dim; c++) {
-				accum += abs(img.at<float>(y+1, x*dim+c) - img.at<float>(y, x*dim+c)); 
+				accum += abs(joint.at<double>(y+1, x*dim+c) - joint.at<double>(y, x*dim+c));
 			}
-			dcty.at<float>(y, x) = fastPow(a, 1.0f + ratio * accum); 
+			dcty.at<double>(y, x) = 1.0 + ratio * accum;
 		}
 	}
 
 	// Apply recursive folter maxiter times
-	img.convertTo(out, CV_MAKETYPE(CV_32F, dim));
-	while(maxiter--) {
-		recursiveFilterHorizontal(out, dctx);
-		recursiveFilterVertical(out, dcty);
+	img.convertTo(out, CV_MAKETYPE(CV_64F, dim));
+	for(int i=0; i<maxiter; i++) {
+        double sigma_H = sigma_s * sqrt(3.0) * pow(2.0, maxiter - i - 1) / sqrt(pow(4.0, maxiter) - 1.0);
+		recursiveFilterHorizontal(out, dctx, sigma_H);
+		recursiveFilterVertical(out, dcty, sigma_H);
 	}
 }
 
@@ -153,6 +168,9 @@ int main(int argc, char** argv) {
 		return -1;
 	}
 
+	// change depth
+	img.convertTo(img, CV_64FC3, 1.0 / 255.0);
+
 	// Parameter set
 	const double sigma_s = argc <= 2 ? 25.0 : atof(argv[2]);
 	const double sigma_r = argc <= 3 ? 0.1  : atof(argv[3]);
@@ -167,7 +185,7 @@ int main(int argc, char** argv) {
 	// Call domain transform filter
 CLOCK_START
 	cv::Mat out;
-	domainTransformFilter(img, out, sigma_s, sigma_r, maxiter);
+	domainTransformFilter(img, out, img, sigma_s, sigma_r, maxiter);
 CLOCK_END
 
 	// Show results
