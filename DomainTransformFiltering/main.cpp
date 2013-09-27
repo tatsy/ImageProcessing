@@ -193,4 +193,7 @@ CLOCK_END
 	cv::imshow("Output", out);
 	cv::waitKey(0);
 	cv::destroyAllWindows();
+
+	out.convertTo(out, CV_8UC3, 255.0);
+	cv::imwrite("output.png", out);
 }
