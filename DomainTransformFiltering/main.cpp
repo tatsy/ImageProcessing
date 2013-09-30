@@ -11,9 +11,9 @@
 * (last three arguments are optional)
 *
 * This code is programmed by 'tatsy'. You can use this
-* code for any purpose :-)
+* code for any purpose (if necessary).
 * If you are satisfied with the program and kind enough of
-* cheering me up, please contact me from my github account
+* cheering me up, please follow my github account
 * "https://github.com/tatsy/". Thanks!
 ************************************************************/
 
