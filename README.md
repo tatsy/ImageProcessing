@@ -3,7 +3,7 @@ Image Processing Projects
 ***
 
 1. Overview
-
+    
     This project contains several implementation of image processing algorithms.
     The project currently includes:
     - Color Transfer [Reinhard 2000]
@@ -20,5 +20,5 @@ Image Processing Projects
     Anyway, you can use this code for any purposes including commertial usage (if necessary).
     If you are satisfied with the program and kind enough of cheering me up, please follow
     my github account https://github.com/tatsy/.
-
- Thanks!
+    
+    Thanks!
