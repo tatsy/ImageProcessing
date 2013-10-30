@@ -112,98 +112,31 @@ void computeSeam(cv::InputArray edge, vector<int>& seam) {
     }
 }
 
+template <class T>
 void carveSeam(cv::Mat& img, vector<int>& seam) {
     const int width  = img.cols;
     const int height = img.rows;
+    const int dim    = img.channels();
+    const int depth  = img.depth();
 
-    cv::Mat tmp = cv::Mat(height, width-1, CV_8UC3);
+    cv::Mat tmp = cv::Mat(height, width-1, CV_MAKETYPE(depth, dim));
     for(int y=0; y<height; y++) {
         for(int x=0; x<width-1; x++) {
             int xx = (x < seam[y]) ? x : x+1;
-            for(int c=0; c<3; c++) {             
-                tmp.at<uchar>(y, x*3+c) = img.at<uchar>(y, xx*3+c);
+            for(int c=0; c<dim; c++) {         
+                tmp.at<T>(y, x*dim+c) = img.at<T>(y, xx*dim+c);
             }
         }
     }
-    tmp.convertTo(img, CV_8U);
+    tmp.convertTo(img, depth);
 }
 
-void computeMultiSeams(cv::InputArray edge, cv::Mat& seam, int n_seam) {
-    cv::Mat e = edge.getMat();
-    const int width  = e.cols;
-    const int height = e.rows;
-
-    seam = cv::Mat::zeros(height, width, CV_32SC1);
-
-    cv::Mat table, prev;
-    for(int i=0; i<n_seam; i++) {
-        table = cv::Mat::zeros(height, width, CV_32SC1);
-        prev  = cv::Mat::zeros(height, width, CV_32SC1);
-    
-        // 動的計画法の実行
-	    for(int x=0; x<width; x++) {
-            table.at<int>(0, x) = e.at<uchar>(0, x);
-             prev.at<int>(0, x) = 0;
-        }
-
-	    for(int y=1; y<height; y++) {
-		    for(int x=0; x<width; x++) {
-			    int id = -INF;
-			    int minval = INT_MAX;
-			    for(int dx=-1; dx<=1; dx++) {
-				    int xx = x + dx;
-				    if(xx >= 0 && xx < width) {
-					    if(minval > e.at<uchar>(y-1, xx) && seam.at<int>(y-1, xx) == 0) {
-						    minval = e.at<uchar>(y-1, xx);
-						    id = dx;
-					    }
-				    }
-			    }
-
-                prev.at<int>(y, x)  = id;
-                if(id != -INF) { 
-    			    table.at<int>(y, x) = table.at<int>(y-1, x+id);
-                } else {
-                    table.at<int>(y, x) = INF;
-                }
-		    }
-	    }
-
-        // バックトラックによるseamの決定
-        seam.resize(height);
-        int minval = INT_MAX;
-        int cur_x  = 0;
-        for(int x=0; x<width; x++) {
-            if(minval > table.at<int>(height-1, x)) {
-                minval = table.at<int>(height-1, x);
-                cur_x = x;
-            }
-        }
-
-        int cur_y = height-1;
-        while(cur_y >= 0) {
-            seam.at<int>(cur_y, cur_x) = 1;
-            if(abs(prev.at<int>(cur_y, cur_x)) <= 1) {
-                cur_x = cur_x + prev.at<int>(cur_y, cur_x);
-            } else {
-                cout << "Too many seams!" << endl;
-                return;
-            }
-            cur_y--;
-        }
-    }
-}
-
-void enlarge(cv::InputArray I, cv::OutputArray O) {
+void enlarge(cv::InputArray I, cv::OutputArray O, cv::Mat& seam) {
     cv::Mat  img = I.getMat();
     cv::Mat& out = O.getMatRef();
     const int width  = img.cols;
     const int height = img.rows;
     const int dim    = img.channels();
-
-    cv::Mat edge, seams;
-    detectEdge(img, edge);
-    computeMultiSeams(edge, seams, npix);
 
     out = cv::Mat(height, width + npix, CV_8UC3);
     for(int y=0; y<height; y++) {
@@ -214,7 +147,7 @@ void enlarge(cv::InputArray I, cv::OutputArray O) {
                 out.at<uchar>(y, xx*dim+c) = img.at<uchar>(y, x*dim+c);
             }
 
-            if(seams.at<int>(y, x) == 1) {
+            if(seam.at<int>(y, x) == 1) {
                 for(int c=0; c<dim; c++) {
                     out.at<uchar>(y, (xx+1)*dim+c) = img.at<uchar>(y, x*dim+c);
                 }
@@ -225,8 +158,8 @@ void enlarge(cv::InputArray I, cv::OutputArray O) {
 }
 
 int main(int argc, char** argv) {
-	if(argc <= 2) {
-		cout << "usage: > SeamCarving.exe [input image] [No. of carved lines]" << endl;
+	if(argc <= 1) {
+		cout << "usage: > SeamCarving.exe [input image]" << endl;
 		return -1;
 	}
 
@@ -253,13 +186,13 @@ int main(int argc, char** argv) {
         img.convertTo(out, CV_8U);
 	    for(int i=0; i<npix; i++) {
             // エッジを抽出する
-            detectEdge(img, edge);
+            detectEdge(out, edge);
 
             // seamの計算
             computeSeam(edge, seam);
 		
 		    // seamをcarveする
-            carveSeam(out, seam);
+            carveSeam<uchar>(out, seam);
 		
 		    // 画像の更新
 		    cv::imshow("output", out);
@@ -269,7 +202,41 @@ int main(int argc, char** argv) {
        	printf("\n");
     }
     else {
-        enlarge(img, out);
+        cv::Mat idx = cv::Mat(height, width, CV_32SC2);
+        for(int y=0; y<height; y++) {
+            for(int x=0; x<width; x++) {
+                idx.at<int>(y, x*2+0) = x; 
+                idx.at<int>(y, x*2+1) = y; 
+            }
+        }
+
+        cv::Mat edge;
+        vector<int> seam;
+        img.convertTo(out, CV_8U);
+	    for(int i=0; i<npix; i++) {
+            // エッジを抽出する
+            detectEdge(out, edge);
+
+            // seamの計算
+            computeSeam(edge, seam);
+		
+		    // seamをcarveする
+            carveSeam<uchar>(out, seam);
+            carveSeam<int>(idx, seam);		
+	    }
+
+        // 削られてもいいseamを保存
+        cv::Mat seams = cv::Mat::ones(img.size(), CV_32SC1);
+        for(int y=0; y<idx.rows; y++) {
+            for(int x=0; x<idx.cols; x++) {
+                int xx = idx.at<int>(y, x*2+0);
+                int yy = idx.at<int>(y, x*2+1);
+                seams.at<int>(yy, xx) = 0;
+            }
+        }
+
+        // seam部分を増やす
+        enlarge(img, out, seams);
     }
 
     cv::imshow("output", out);

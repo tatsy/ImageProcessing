@@ -4,6 +4,8 @@
 #include <set>
 #include <map>
 #include <queue>
+#include <algorithm>
+#include <functional>
 using namespace std;
 
 #include "opencv2/opencv.hpp"
